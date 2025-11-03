@@ -1,137 +1,134 @@
 package handlers
 
 import (
-	"database/sql"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/karanjar/cargobackend_fibre_framework.git/models"
 )
 
 var Mu sync.Mutex
 
-func Carhandler(w http.ResponseWriter, r *http.Request) {
-
-	path := r.URL.Path
-
-	entity := strings.TrimPrefix(path, "/cars")
-	entity = strings.Trim(entity, "/")
-
-	switch r.Method {
-	case "POST":
-		if entity == "" {
-			Createcar(w, r)
-		} else {
-			http.Error(w, "Incorrect Bad Request", http.StatusBadRequest)
-		}
-	case "GET":
-		if entity == "" {
-			http.Error(w, "You entered bad get request", http.StatusBadRequest)
-			return
-		} else {
-			id, _ := strconv.Atoi(entity)
-			Getcar(w, r, id)
-
-		}
-	case "PUT":
-		if entity == "" {
-			http.Error(w, "You entered bad put request", http.StatusBadRequest)
-
-		} else {
-			id, _ := strconv.Atoi(entity)
-			Updatecar(w, r, id)
-		}
-
-	case "DELETE":
-		if entity == "" {
-			http.Error(w, "You entered bad delete request", http.StatusBadRequest)
-		} else {
-			id, _ := strconv.Atoi(entity)
-			Deletecar(w, r, id)
-		}
-	default:
-		http.Error(w, "we dont support this Method", http.StatusMethodNotAllowed)
-	}
-
-}
-func Createcar(w http.ResponseWriter, r *http.Request) {
+// Createcar  godoc
+// @Summary Create a new car
+// @Description Add a new car to the database
+// @Tags cars
+// @Accept  json
+// @Produce  json
+// @Param car body models.Car true "Car data"
+// @Success 200 {object} models.Car
+// @Failure 400 {object}  models.Error
+// @Router /cars [post]
+func Createcar(c *fiber.Ctx) error {
 	Mu.Lock()
 	defer Mu.Unlock()
 
 	car := &models.Car{}
 
-	if err := json.NewDecoder(r.Body).Decode(car); err != nil {
-		http.Error(w, "incorrect json input", http.StatusBadRequest)
-		return
+	if err := c.BodyParser(car); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(&models.Error{
+			Message: "incorrect input body",
+			Details: err.Error(),
+		})
 	}
 
 	if err := car.Insert(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "incorrect input body",
+		})
 	}
-	fmt.Println("Car created with the id:", car.Id)
-	w.WriteHeader(http.StatusCreated)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(car)
 
+	fmt.Println("Car created with the id:", car.Id)
+	return c.Status(fiber.StatusCreated).JSON(car)
 }
 
-func Getcar(w http.ResponseWriter, r *http.Request, id int) {
+// Getcar godoc
+// @Summary Get  a new car
+// @Description Get a car from the inventory
+// @Tags cars
+// @Accept  json
+// @Produce  json
+// @Param id path string true "Car id"
+// @Success 200 {object} models.Car
+// @Failure 400 {object}  models.Error
+// @Failure 404 {object} models.Error
+// @Router /cars/{id} [get]
+func Getcar(c *fiber.Ctx) error {
 	Mu.Lock()
 	defer Mu.Unlock()
 
-	car := &models.Car{Id: id}
+	car := &models.Car{}
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(&models.Error{
+			Message: "invalid car id",
+			Details: err.Error(),
+		})
+	}
+	car.Id = id
 
 	if err := car.Get(); err != nil {
-		if err == sql.ErrNoRows {
-			http.Error(w, "Car not found", http.StatusNotFound)
-			return
-		}
-
-		http.Error(w, "Server error", http.StatusInternalServerError)
-		fmt.Println("Error fetching car:", err)
-		return
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "car with the given id is not found",
+			"id":    car.Id,
+		})
 	}
 
-	fmt.Println("Car found with the id:", id)
+	//fmt.Println("Car found with the id:", id)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(car)
+	return c.Status(fiber.StatusOK).JSON(car)
 
 }
 
-func Deletecar(w http.ResponseWriter, r *http.Request, id int) {
+func Deletecar(c *fiber.Ctx) error {
 	Mu.Lock()
 	defer Mu.Unlock()
-	car := &models.Car{Id: id}
+	car := &models.Car{}
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid delete car id",
+		})
+	}
 
-	car.Delete()
+	car.Id = id
+	if err := car.Delete(); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "car with the given id does not found",
+		})
+	}
 
 	fmt.Println("Car deleted with the id:", id)
-
-	w.WriteHeader(http.StatusNoContent)
-
+	return c.SendStatus(fiber.StatusNoContent)
 }
-func Updatecar(w http.ResponseWriter, r *http.Request, id int) {
+func Updatecar(c *fiber.Ctx) error {
 	Mu.Lock()
 	defer Mu.Unlock()
-	car := &models.Car{Id: id}
-	if err := json.NewDecoder(r.Body).Decode(car); err != nil {
-		http.Error(w, "incorrect json input", http.StatusBadRequest)
-		return
+	car := &models.Car{}
+
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid update car id",
+		})
 	}
+
+	if err := c.BodyParser(car); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "incorrect request body",
+		})
+	}
+
+	car.Id = id
+
 	if err := car.Update(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "car with the given id is not found",
+		})
 	}
-	fmt.Println("Car Updated with the id:", car.Id)
-	w.WriteHeader(http.StatusCreated)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(car)
+	fmt.Println("Car Updated with the id:", id)
+	return c.Status(fiber.StatusCreated).JSON(car)
 
 }
