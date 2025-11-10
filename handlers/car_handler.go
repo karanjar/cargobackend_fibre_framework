@@ -1,12 +1,17 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/karanjar/cargobackend_fibre_framework.git/config"
 	"github.com/karanjar/cargobackend_fibre_framework.git/models"
+	"github.com/redis/go-redis/v9"
 )
 
 var Mu sync.Mutex
@@ -59,6 +64,9 @@ func Getcar(c *fiber.Ctx) error {
 	Mu.Lock()
 	defer Mu.Unlock()
 
+	//check  if the car is already presnt in the cache
+	//if not then only goto the postgres
+
 	car := &models.Car{}
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -67,6 +75,21 @@ func Getcar(c *fiber.Ctx) error {
 			Details: err.Error(),
 		})
 	}
+	key := strconv.FormatInt(int64(id), 10)
+	val, err := config.Cache.Get(c.Context(), key).Result()
+	if err == nil {
+		if err := json.Unmarshal([]byte(val), car); err != nil {
+			fmt.Printf("unable to unmarshal cached car: %v\n", err)
+		} else {
+			fmt.Printf("cache hit for car ID:%v", id)
+			return c.Status(fiber.StatusOK).JSON(car)
+		}
+	} else if !errors.Is(err, redis.Nil) {
+		fmt.Printf("redis error:%v\n", id)
+	} else {
+		fmt.Printf("cache miss for id:%v\n", id)
+	}
+
 	car.Id = id
 
 	if err := car.Get(); err != nil {
@@ -77,6 +100,11 @@ func Getcar(c *fiber.Ctx) error {
 	}
 
 	//fmt.Println("Car found with the id:", id)
+	b, _ := json.Marshal(car)
+	err = config.Cache.Set(c.Context(), key, b, 60*time.Minute).Err()
+	if err != nil {
+		fmt.Printf("unable to add key to the redis:  %v", err)
+	}
 
 	return c.Status(fiber.StatusOK).JSON(car)
 
